@@ -38,7 +38,7 @@ pnpm test --run -t 'creates new link'     # tests matching a name
 
 - ESLint and TypeScript extend generated `.nuxt` files. If they are missing, run `pnpm postinstall` (or `pnpm install`) before diagnosing config errors.
 - Authenticated tests need `NUXT_SITE_TOKEN`; local values are loaded from `.env`, with `.env.example` as the template.
-- There is no validation CI workflow. Run the relevant lint, typecheck, and test commands locally.
+- Deployment and upstream release sync both gate changes on lint, typecheck, build, and tests. Run the same checks locally.
 - The pre-commit hook only runs `eslint --fix` on staged JS/TS/Vue files; it does not replace full-project verification.
 
 ## Architecture and data flow
@@ -75,3 +75,11 @@ pnpm db:migrate:remote   # mutates the configured remote D1 database
 
 - `pnpm install` regenerates ignored `public/world.json` via `build:map`.
 - `pnpm build` regenerates `public/sphere.bin` through its prebuild hook. `build:colo` and `build:testimonials` generate `public/colos.json` and `app/data/testimonials.json`; the testimonial task is network-dependent and randomizes order.
+
+## Fork deployment
+
+Keep application code identical to upstream Sink except the owner-approved Heatmap callback type annotation. Our changes are Cloudflare configuration and GitHub deployment/release-sync workflows. Runtime secrets are installed after a build without site or analytics credentials. Use a synthetic environment for tests and keep remote bindings disabled. Vue is declared explicitly because upstream unit tests import it directly. Sink is standalone; consumer-specific policies belong in API clients. Use the `sink` database and dataset, standard AI binding, and upstream runtime defaults.
+
+Release sync validates merges before a non-force push, then explicitly dispatches deployment. Keep check and publish jobs separate. Conflicts, failed checks, and workflow changes require manual review. Schedules may stop after 60 inactive days.
+
+Use Conventional Commits for every commit.

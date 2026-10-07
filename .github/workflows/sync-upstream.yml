@@ -1,0 +1,131 @@
+name: Sync Sink releases
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sink-release-sync
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.repository == 'notsuhas/Sink' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      changed: ${{ steps.merge.outputs.changed }}
+      base: ${{ steps.merge.outputs.base }}
+      candidate: ${{ steps.merge.outputs.candidate }}
+    env:
+      NUXT_SITE_TOKEN: synthetic-ci-test-token
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Merge latest stable release
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=$(gh api repos/miantiao-me/Sink/releases/latest --jq .tag_name)
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Unexpected release tag'; exit 1; }
+          base=$(git rev-parse HEAD)
+          git fetch --no-tags https://github.com/miantiao-me/Sink.git "refs/tags/$tag"
+          release=$(git rev-parse 'FETCH_HEAD^{commit}')
+          if git merge-base --is-ancestor "$release" HEAD; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo "Already includes Sink $tag." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if ! git -c core.hooksPath=/dev/null merge --no-ff "$release" -m "Merge Sink $tag"; then
+            git merge --abort
+            echo "Sink $tag conflicts with fork changes. Production is unchanged; resolve the merge manually." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if ! git diff --quiet "$base" HEAD -- .github/workflows; then
+            echo "Sink $tag changes GitHub workflows. Review and merge this release manually; production is unchanged." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          candidate=$(git rev-parse HEAD)
+          git bundle create "$RUNNER_TEMP/sink-release.bundle" HEAD "^$base"
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "candidate=$candidate" >> "$GITHUB_OUTPUT"
+          echo "Testing Sink $tag merged into the fork." >> "$GITHUB_STEP_SUMMARY"
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        if: steps.merge.outputs.changed == 'true'
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v6
+        if: steps.merge.outputs.changed == 'true'
+        with:
+          node-version: 24.18.0
+      - name: Validate merged release
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm lint
+          pnpm types:check
+          pnpm build
+          pnpm test --run
+      - uses: actions/upload-artifact@v7
+        if: steps.merge.outputs.changed == 'true'
+        with:
+          name: sink-release
+          path: ${{ runner.temp }}/sink-release.bundle
+          retention-days: 1
+
+  publish:
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: sink-release
+          path: ${{ runner.temp }}/sink-release
+      - name: Update fork and start deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ needs.check.outputs.base }}
+          CANDIDATE_SHA: ${{ needs.check.outputs.candidate }}
+        run: |
+          set -euo pipefail
+          current=$(git rev-parse HEAD)
+          [[ "$current" == "$BASE_SHA" || "$current" == "$CANDIDATE_SHA" ]] || { echo 'Master changed during checks; retry sync.'; exit 1; }
+          git fetch "$RUNNER_TEMP/sink-release/sink-release.bundle" HEAD
+          [[ $(git rev-parse FETCH_HEAD) == "$CANDIDATE_SHA" ]]
+          git merge-base --is-ancestor "$BASE_SHA" "$CANDIDATE_SHA"
+          gh auth setup-git
+          if [[ "$current" == "$BASE_SHA" ]]; then
+            git -c core.hooksPath=/dev/null push origin "$CANDIDATE_SHA:refs/heads/master"
+          fi
+          for attempt in 1 2 3; do
+            if gh workflow run deploy.yml --repo "$GITHUB_REPOSITORY" --ref master; then
+              break
+            fi
+            if [[ "$attempt" == 3 ]]; then
+              echo 'Fork updated but deployment dispatch failed. Re-run the failed publish job, or run Deploy Sink manually.' >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            sleep 5
+          done
+          echo 'Fork updated. Deployment started; see Deploy Sink for its result.' >> "$GITHUB_STEP_SUMMARY"

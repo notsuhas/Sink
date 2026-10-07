@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "sink",
+  "name": "theclaude-links",
+  "routes": [{ "pattern": "link.theclau.de", "custom_domain": true }],
   "main": ".output/server/index.mjs",
   "assets": {
     "binding": "ASSETS",
@@ -11,7 +12,7 @@
   "compatibility_flags": [
     "nodejs_compat"
   ],
-  "keep_vars": true,
+  "keep_vars": false,
   "upload_source_maps": true,
   "observability": {
     "logs": {

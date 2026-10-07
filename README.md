@@ -1,3 +1,19 @@
+## This deployment
+
+This fork keeps Sink's application code unchanged except for one callback type annotation needed by typecheck. Cloudflare bindings live in `wrangler.jsonc` and production runtime settings are passed by the deployment Action; site and analytics tokens are runtime secrets. Sink runs at `link.theclau.de`, as a standalone service. The private referral assistant is one API client and stores its own recipient mappings.
+
+Pushes to `master` run lint, typecheck, build, and upstream tests before deploying through `.github/workflows/deploy.yml`. Repository variables supply `DEPLOY_D1_DATABASE_ID` and `DEPLOY_KV_NAMESPACE_ID`. Secrets supply `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `NUXT_CF_API_TOKEN`, and `NUXT_SITE_TOKEN`. Production builds have no site or analytics token; deployment installs them as runtime secrets. Deployment replaces plain Worker variables with the declared hosting settings so removed overrides do not persist. D1, KV, and the Analytics Engine dataset are named `sink`. Sink retains its standard AI binding and runtime defaults.
+
+Only deployment and release sync are enabled; unrelated upstream Actions are disabled. Neither runs on pull requests. Deployment credentials are scoped to deployment steps, and dependency setup is pinned to a commit.
+
+`.github/workflows/sync-upstream.yml` checks stable upstream releases hourly, tests the merge, then updates the fork and starts deployment. Conflicts, failed checks, and workflow changes require manual review. If deployment dispatch fails after the push, re-run the failed publish job or start Deploy Sink manually. GitHub may disable schedules after 60 inactive days.
+
+Vue is declared explicitly for upstream unit tests, and Vitest disables remote Cloudflare bindings.
+
+Use Node 24 and pnpm 11.11.0. Run lint, typecheck, build, and tests with a synthetic site token and no production environment file.
+
+---
+
 # ⚡ Sink
 
 **A Simple, Speedy, Secure, and Serverless Link Shortener with Analytics, Running Entirely on Cloudflare.**
